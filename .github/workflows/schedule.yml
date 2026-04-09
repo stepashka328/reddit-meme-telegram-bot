@@ -1,0 +1,39 @@
+name: Post Memes to Telegram
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'  # Запуск каждые 4 часа (по UTC)
+  workflow_dispatch:  # Возможность запустить вручную
+
+jobs:
+  post-memes:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Важно для сохранения файла posted.json между запусками
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+      
+      - name: Commit posted.json updates
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add posted.json
+          git commit -m "Update posted list [skip ci]" || echo "No changes to commit"
+          git push
