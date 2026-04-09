@@ -5,6 +5,9 @@ on:
     - cron: '0 */4 * * *'  # Запуск каждые 4 часа (по UTC)
   workflow_dispatch:  # Возможность запустить вручную
 
+permissions:
+  contents: write
+
 jobs:
   post-memes:
     runs-on: ubuntu-latest
