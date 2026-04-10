@@ -3,16 +3,22 @@ import json
 import feedparser
 import requests
 import re
+import random
+import time
 from datetime import datetime
 
 # === НАСТРОЙКИ ===
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-REDDIT_SUBREDDITS = ['memes', 'dankmemes']
-POSTS_PER_RUN = 3
-MIN_UPVOTES = -1  # ⬇️ -1 = отключить фильтр лайков
-MAX_IMAGE_SIZE = 10 * 1024 * 1024
+# Используем 'memes' или 'dankmemes'
+REDDIT_SUBREDDITS = ['memes'] 
+POSTS_PER_RUN = 1  # ⬅️ ВАЖНО: Публикуем по 1 штуке за раз, чтобы не было "пачек"
 FILE_PATH = 'posted.json'
+
+# Маскировка под браузер (чтобы Reddit не блокировал)
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
 
 def load_posted():
     try:
@@ -27,12 +33,9 @@ def save_posted(posted):
 
 def download_image(url):
     try:
-        response = requests.get(url, timeout=15, stream=True)
+        response = requests.get(url, headers=HEADERS, timeout=15, stream=True)
         response.raise_for_status()
-        content = response.content
-        if len(content) > MAX_IMAGE_SIZE:
-            return None
-        return content
+        return response.content
     except:
         return None
 
@@ -44,105 +47,86 @@ def send_photo(caption, image_bytes):
 
 def send_message(text):
     url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
-    data = {'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': False}
+    data = {'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
     return requests.post(url, json=data, timeout=30)
-
-def extract_image_url(entry):
-    """Извлекает прямую ссылку на картинку из RSS-записи Reddit"""
-    # Вариант 1: enclosure
-    if hasattr(entry, 'enclosures') and entry.enclosures:
-        for enc in entry.enclosures:
-            if enc.get('type', '').startswith('image/'):
-                return enc.get('href')
-    
-    # Вариант 2: поиск в summary/content
-    text = ''
-    if hasattr(entry, 'summary'):
-        text += entry.summary
-    if hasattr(entry, 'content') and isinstance(entry.content, list):
-        text += entry.content[0].get('value', '')
-    
-    # Ищем i.redd.it ссылки
-    match = re.search(r'(https?://i\.redd\.it/[^"\s\']+\.(jpg|png|gif|jpeg))', text)
-    if match:
-        return match.group(1)
-    
-    # Ищем v.redd.it (видео) — пропускаем
-    if 'v.redd.it' in text:
-        return None
-        
-    return None
 
 def main():
     posted = load_posted()
-    print(f"📦 Загружено {len(posted)} уже опубликованных ID")
+    count_published = 0
     
     for subreddit in REDDIT_SUBREDDITS:
-        # 🔥 Используем /hot/ вместо /?sort=top — более надёжно для RSS
-        rss_url = f'https://www.reddit.com/r/{subreddit}/hot/.rss?limit=25'
-        print(f"🔍 Парсим: {rss_url}")
+        # 🔥 ИСПОЛЬЗУЕМ OLD.REDDIT.COM - ОН СТАБИЛЬНЕЕ ДЛЯ ПАРСИНГА
+        rss_url = f'https://old.reddit.com/r/{subreddit}/hot/.rss'
+        
+        # Добавляем случайную задержку перед запросом (анти-спам)
+        time.sleep(random.uniform(1, 3)) 
         
         feed = feedparser.parse(rss_url)
-        print(f"📊 Найдено записей: {len(feed.entries)}")
         
-        if feed.bozo:
-            print(f"⚠️ Ошибка парсинга: {feed.bozo_exception}")
+        if feed.bozo and feed.status != 200:
+            print(f"⚠️ Ошибка доступа к {subreddit}: {feed.bozo_exception}")
             continue
             
-        for entry in feed.entries[:20]:
+        # Перемешиваем посты, чтобы не брать всегда одни и те же топы
+        entries = list(feed.entries)
+        random.shuffle(entries)
+
+        for entry in entries:
+            if count_published >= POSTS_PER_RUN:
+                break
+
             try:
                 post_id = entry.link.split('/')[-3]
             except:
-                post_id = entry.get('id', 'unknown')
+                continue
             
             if post_id in posted:
                 continue
-                
+            
             title = entry.title
             link = entry.link
-            image_url = extract_image_url(entry)
             
-            # 👍 Пытаемся получить лайки (не всегда доступно в RSS)
-            upvotes = 0
-            if hasattr(entry, 'score'):
-                try:
-                    upvotes = int(entry.score)
-                except:
-                    pass
+            # Ищем картинку
+            image_url = None
+            text_to_search = ''
+            if hasattr(entry, 'summary'): text_to_search += entry.summary
+            if hasattr(entry, 'content') and isinstance(entry.content, list):
+                text_to_search += entry.content[0].get('value', '')
             
-            # 🔥 Фильтр лайков (если MIN_UPVOTES >= 0)
-            if MIN_UPVOTES >= 0 and upvotes < MIN_UPVOTES:
-                continue
+            match = re.search(r'(https?://i\.redd\.it/[^"\s\']+\.(jpg|png|gif|jpeg))', text_to_search)
+            if match:
+                image_url = match.group(1)
             
-            # Формируем подпись
-            caption = f"{title}\n\n👍 {upvotes} | 🔗 <a href='{link}'>Reddit</a>\n\n#мем #reddit"
+            # Формируем текст
+            # Убираем ссылки из заголовка для красоты
+            clean_title = re.sub(r'http\S+', '', title).strip()
+            caption = f"{clean_title}\n\n🔗 <a href='{link}'>Источник</a>\n#мем"
             
-            # Публикуем
+            success = False
+            
+            # Публикация
             if image_url:
-                print(f"🖼️ Картинка: {image_url[:50]}...")
-                image_bytes = download_image(image_url)
-                if image_bytes:
-                    response = send_photo(caption, image_bytes)
-                    if response and response.status_code == 200:
-                        print(f"✅ Опубликовано: {title[:50]}...")
-                        posted.append(post_id)
-                        save_posted(posted[-500:])
-                        if len([p for p in posted if p in [entry.link.split('/')[-3] for entry in feed.entries]]) >= POSTS_PER_RUN:
-                            break
-                        continue
+                img_bytes = download_image(image_url)
+                if img_bytes:
+                    resp = send_photo(caption, img_bytes)
+                    if resp and resp.status_code == 200:
+                        success = True
+            else:
+                # Если нет картинки - шлем текст
+                resp = send_message(caption)
+                if resp and resp.status_code == 200:
+                    success = True
             
-            # Фолбэк: текстовый пост
-            response = send_message(f"{caption}\n\n🖼️ <i>Картинка не загружена</i>")
-            if response and response.status_code == 200:
-                print(f"✅ Опубликовано (текст): {title[:50]}...")
+            if success:
+                print(f"✅ Опубликовано: {clean_title[:30]}...")
                 posted.append(post_id)
-                save_posted(posted[-500:])
-            
-            # Ограничитель постов за запуск
-            if sum(1 for p in posted if p in [e.link.split('/')[-3] for e in feed.entries]) >= POSTS_PER_RUN:
-                break
+                count_published += 1
+                # Задержка между постами, если их несколько
+                time.sleep(2) 
     
-    print(f"🔄 Готово. Всего в памяти: {len(posted)}")
+    # Сохраняем историю (храним последние 1000, чтобы не раздувать файл)
+    save_posted(posted[-1000:])
+    print(f"🏁 Цикл завершен. Отправлено: {count_published}")
 
 if __name__ == '__main__':
     main()
