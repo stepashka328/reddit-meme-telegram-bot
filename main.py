@@ -10,7 +10,13 @@ from datetime import datetime
 # === НАСТРОЙКИ ===
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-REDDIT_SUBREDDITS = ['memes']
+REDDIT_SUBREDDITS = [
+    'memes',
+    'dankmemes',
+    'wholesomememes',
+    'me_irl',
+    'AdviceAnimals',
+]
 POSTS_PER_RUN = 1
 FILE_PATH = 'posted.json'
 
