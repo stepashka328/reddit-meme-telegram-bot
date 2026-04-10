@@ -10,14 +10,13 @@ from datetime import datetime
 # === НАСТРОЙКИ ===
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-# Используем 'memes' или 'dankmemes'
-REDDIT_SUBREDDITS = ['memes'] 
-POSTS_PER_RUN = 1  # ⬅️ ВАЖНО: Публикуем по 1 штуке за раз, чтобы не было "пачек"
+REDDIT_SUBREDDITS = ['memes']
+POSTS_PER_RUN = 1
 FILE_PATH = 'posted.json'
 
-# Маскировка под браузер (чтобы Reddit не блокировал)
+# Маскировка под браузер
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
 def load_posted():
@@ -55,19 +54,25 @@ def main():
     count_published = 0
     
     for subreddit in REDDIT_SUBREDDITS:
-        # 🔥 ИСПОЛЬЗУЕМ OLD.REDDIT.COM - ОН СТАБИЛЬНЕЕ ДЛЯ ПАРСИНГА
         rss_url = f'https://old.reddit.com/r/{subreddit}/hot/.rss'
         
-        # Добавляем случайную задержку перед запросом (анти-спам)
-        time.sleep(random.uniform(1, 3)) 
+        time.sleep(random.uniform(1, 3))
         
-        feed = feedparser.parse(rss_url)
+        # 🔥 ИСПРАВЛЕНИЕ: сначала запрос через requests с заголовками
+        try:
+            response = requests.get(rss_url, headers=HEADERS, timeout=15)
+            if response.status_code != 200:
+                print(f"⚠️ HTTP {response.status_code} от {subreddit}")
+                continue
+            feed = feedparser.parse(response.content)
+        except Exception as e:
+            print(f"⚠️ Ошибка запроса к {subreddit}: {e}")
+            continue
         
-        if feed.bozo and feed.status != 200:
-            print(f"⚠️ Ошибка доступа к {subreddit}: {feed.bozo_exception}")
+        if feed.bozo:
+            print(f"⚠️ Ошибка парсинга {subreddit}: {feed.bozo_exception}")
             continue
             
-        # Перемешиваем посты, чтобы не брать всегда одни и те же топы
         entries = list(feed.entries)
         random.shuffle(entries)
 
@@ -86,7 +91,7 @@ def main():
             title = entry.title
             link = entry.link
             
-            # Ищем картинку
+            # Поиск картинки
             image_url = None
             text_to_search = ''
             if hasattr(entry, 'summary'): text_to_search += entry.summary
@@ -97,14 +102,11 @@ def main():
             if match:
                 image_url = match.group(1)
             
-            # Формируем текст
-            # Убираем ссылки из заголовка для красоты
             clean_title = re.sub(r'http\S+', '', title).strip()
             caption = f"{clean_title}\n\n🔗 <a href='{link}'>Источник</a>\n#мем"
             
             success = False
             
-            # Публикация
             if image_url:
                 img_bytes = download_image(image_url)
                 if img_bytes:
@@ -112,7 +114,6 @@ def main():
                     if resp and resp.status_code == 200:
                         success = True
             else:
-                # Если нет картинки - шлем текст
                 resp = send_message(caption)
                 if resp and resp.status_code == 200:
                     success = True
@@ -121,10 +122,8 @@ def main():
                 print(f"✅ Опубликовано: {clean_title[:30]}...")
                 posted.append(post_id)
                 count_published += 1
-                # Задержка между постами, если их несколько
-                time.sleep(2) 
+                time.sleep(2)
     
-    # Сохраняем историю (храним последние 1000, чтобы не раздувать файл)
     save_posted(posted[-1000:])
     print(f"🏁 Цикл завершен. Отправлено: {count_published}")
 
