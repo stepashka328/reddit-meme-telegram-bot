@@ -2,7 +2,8 @@ name: Post Memes to Telegram
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # Запуск каждые 4 часа (по UTC)
+    # Запуск каждые 2 часа (в 00:00, 02:00, 04:00 и т.д. по UTC)
+    - cron: '0 */2 * * *' 
   workflow_dispatch:  # Возможность запустить вручную
 
 permissions:
